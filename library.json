@@ -1,0 +1,7 @@
+{
+  "name": "IR-Sensor",
+  "version": "1.0.0",
+  "description": "Eigene IR-Bibliothek",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
