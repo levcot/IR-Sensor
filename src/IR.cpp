@@ -1,5 +1,21 @@
 #include "IR.h"
+#include <EEPROM.h>
 
+
+static const uint32_t IR_EEPROM_MAGIC = 0x49524341;
+static const uint16_t IR_EEPROM_VERSION = 1;
+
+
+struct IRCalibrationData
+{
+    uint32_t magic;
+    uint16_t version;
+
+    uint16_t minValues[IR_SENSOR_COUNT];
+    uint16_t maxValues[IR_SENSOR_COUNT];
+
+    uint32_t checksum;
+};
 
 static const uint8_t IR_PINS[IR_SENSOR_COUNT] =
 {
@@ -13,6 +29,83 @@ static uint16_t ir_max[IR_SENSOR_COUNT];
 static int ir_lastPosition = 5000;
 
 static bool ir_calibrated = false;
+
+//VARIABLEN FÜR KALIBRIERUNG
+
+static uint32_t IR_calculateChecksum(
+    const IRCalibrationData &data)
+{
+    uint32_t sum = 0;
+
+    for (int i = 0; i < IR_SENSOR_COUNT; i++)
+    {
+        sum = sum * 31 + data.minValues[i];
+        sum = sum * 31 + data.maxValues[i];
+    }
+
+return sum;
+}
+
+static void IR_saveCalibration()
+{
+    IRCalibrationData data{};
+
+    data.magic = IR_EEPROM_MAGIC;
+    data.version = IR_EEPROM_VERSION;
+
+    for (int i = 0; i < IR_SENSOR_COUNT; i++)
+    {
+        data.minValues[i] = ir_min[i];
+        data.maxValues[i] = ir_max[i];
+    }
+
+    data.checksum = IR_calculateChecksum(data);
+
+    // Daten im EEPROM speichern
+    EEPROM.put(0, data);
+}
+
+
+static bool IR_loadCalibration()
+{
+    IRCalibrationData data{};
+
+    EEPROM.get(0, data);
+
+
+    if (data.magic != IR_EEPROM_MAGIC ||
+        data.version != IR_EEPROM_VERSION)
+    {
+        return false;
+    }
+
+
+    if (data.checksum != IR_calculateChecksum(data))
+    {
+        return false;
+    }
+
+
+    for (int i = 0; i < IR_SENSOR_COUNT; i++)
+    {
+        if (data.minValues[i] > 4095 ||
+            data.maxValues[i] > 4095 ||
+            data.maxValues[i] < data.minValues[i] ||
+            data.maxValues[i] - data.minValues[i] < 10)
+        {
+            return false;
+        }
+    }
+
+
+    for (int i = 0; i < IR_SENSOR_COUNT; i++)
+    {
+        ir_min[i] = data.minValues[i];
+        ir_max[i] = data.maxValues[i];
+    }
+
+    return true;
+}
 
 //SENSOR INITIALISIEREN
 
@@ -29,7 +122,9 @@ void IR_begin()
     }
 
     ir_lastPosition = 5000;
-    ir_calibrated = false;
+
+    ir_calibrated = IR_loadCalibration();
+
 }
 
 
@@ -39,6 +134,9 @@ void IR_begin()
 
 void IR_calibrate(unsigned long durationMs)
 {
+
+     ir_calibrated = false;
+
     for (int i = 0; i < IR_SENSOR_COUNT; i++)
     {
         ir_min[i] = 4095;
@@ -63,7 +161,32 @@ void IR_calibrate(unsigned long durationMs)
         delay(5);
     }
 
-    ir_calibrated = true;
+    bool gueltig = true;
+
+    for (int i = 0; i < IR_SENSOR_COUNT; i++)
+    {
+        if (ir_max[i] > 4095 ||
+            ir_min[i] > 4095 ||
+            ir_max[i]< ir_min[i] ||
+            ir_max[i] - ir_min[i] < 10)
+        {
+            gueltig = false;
+        }
+    }
+
+    if (gueltig)
+    {
+        ir_calibrated = true;
+
+        IR_saveCalibration();
+        Serial.println("Kalibrierung erfolgreich!");
+    }
+    else
+    {
+         ir_calibrated = IR_loadCalibration();
+         Serial.println("Fehler bei der Kalibrierung!");
+    }
+
 }
 
 //ROHE ANALOGMESSWERTE AUSLESEN
@@ -152,3 +275,4 @@ int IR_getPosition()
 
     return position;
 }
+
